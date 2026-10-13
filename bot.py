@@ -1,9 +1,22 @@
 import os
 import sqlite3
+import threading
+from flask import Flask
 import telebot
 from telebot import types
 
-# Securely fetch token and admin id from Environment Variables (Render/Koyeb)
+# --- Flask Web Server for Render Port Binding ---
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "Bot is running live and active 24/7!"
+
+def run_flask():
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
+
+# Securely fetch token and admin id from Environment Variables
 TOKEN = os.environ.get("TOKEN")
 ADMIN_ID = int(os.environ.get("ADMIN_ID", "6913254882"))
 
@@ -13,7 +26,6 @@ bot = telebot.TeleBot(TOKEN, parse_mode="HTML")
 def init_db():
     conn = sqlite3.connect('bot_database.db', check_same_thread=False)
     cursor = conn.cursor()
-    # Users table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
@@ -21,7 +33,6 @@ def init_db():
             username TEXT
         )
     ''')
-    # Channels table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS channels (
             user_id INTEGER,
@@ -34,7 +45,6 @@ def init_db():
 
 init_db()
 
-# Database Helper Functions
 def add_user_db(user_id, name, username):
     conn = sqlite3.connect('bot_database.db', check_same_thread=False)
     cursor = conn.cursor()
@@ -73,13 +83,11 @@ def get_all_channels():
     conn.close()
     return [row[0] for row in rows]
 
-# Caches for workflow
 post_cache = {}
 broadcast_target = {}
 help_mode = set()
 broadcast_mode = set()
 
-# Main Persistent Keyboard
 def get_main_keyboard(user_id):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     markup.add(
@@ -100,17 +108,13 @@ def send_welcome(message):
     name = message.from_user.first_name
     username = message.from_user.username or "None"
 
-    # Check if user already exists in DB
     existing_users = [u[0] for u in get_all_users()]
     if user_id not in existing_users:
         if user_id != ADMIN_ID:
             try:
                 bot.send_message(
                     ADMIN_ID,
-                    f"🚨 **New User Alert!**\n\n"
-                    f"👤 Name: {name}\n"
-                    f"🆔 ID: <code>{user_id}</code>\n"
-                    f"🔗 Username: @{username}"
+                    f"🚨 **New User Alert!**\n\n👤 Name: {name}\n🆔 ID: <code>{user_id}</code>\n🔗 Username: @{username}"
                 )
             except Exception:
                 pass
@@ -124,7 +128,6 @@ def send_welcome(message):
     )
     bot.send_message(user_id, welcome_text, reply_markup=get_main_keyboard(user_id))
 
-# Reply Keyboard Handlers
 @bot.message_handler(func=lambda msg: msg.text in [
     "✨ Create Post", "📢 Add Channel", "📁 My Channels", "🛟 Help & Support", "👑 Admin Panel"
 ])
@@ -185,7 +188,6 @@ def save_user_channel(message):
     add_channel_db(user_id, channel)
     bot.send_message(user_id, f"✅ Channel/Group <b>{channel}</b> successfully added!")
 
-# User Help Message Handler
 @bot.message_handler(func=lambda msg: msg.from_user.id in help_mode)
 def process_help_message(message):
     user_id = message.from_user.id
@@ -201,16 +203,12 @@ def process_help_message(message):
     try:
         bot.send_message(
             ADMIN_ID,
-            f"📩 **New Help Request!**\n\n"
-            f"👤 From: {user_name}\n"
-            f"🆔 ID: <code>{user_id}</code>\n\n"
-            f"💬 Message:\n{message.text}"
+            f"📩 **New Help Request!**\n\n👤 From: {user_name}\n🆔 ID: <code>{user_id}</code>\n\n💬 Message:\n{message.text}"
         )
         bot.send_message(user_id, "✅ Apnar message admin-er kache successfully pathano hoyeche!")
     except Exception as e:
         bot.send_message(user_id, f"❌ Failed to send message. Error: {e}")
 
-# Inline Callbacks Handler
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callbacks(call):
     user_id = call.from_user.id
@@ -254,13 +252,12 @@ def handle_callbacks(call):
         except Exception as e:
             bot.send_message(user_id, f"❌ Failed to post. Make sure bot is Admin in <b>{target}</b>.\nError: <code>{e}</code>")
 
-    # Admin Panel Actions
     elif user_id == ADMIN_ID:
         if data == "admin_stats":
             users = get_all_users()
             channels = get_all_channels()
             bot.answer_callback_query(call.id)
-            bot.send_message(ADMIN_ID, f"📊 **Bot Statistics (Database):**\n\n👥 Total Users: {len(users)}\n📁 Total Connected Channels/Groups: {len(channels)}")
+            bot.send_message(ADMIN_ID, f"📊 **Bot Statistics:**\n\n👥 Total Users: {len(users)}\n📁 Total Connected Channels/Groups: {len(channels)}")
 
         elif data == "admin_users":
             bot.answer_callback_query(call.id)
@@ -333,9 +330,8 @@ def receive_url_button(message):
         )
         bot.send_message(user_id, f"✅ Button <b>{btn_text}</b> added successfully!", reply_markup=markup)
     except Exception:
-        bot.send_message(user_id, "❌ Wrong format! Send like:\n<code>Click Here - https://t.me/...</code>")
+        bot.send_message(user_id, "❌ Wrong format! Send like:\n<code>ClickHere - https://t.me/...</code>")
 
-# Admin Broadcast Executor
 @bot.message_handler(func=lambda msg: msg.from_user.id in broadcast_mode and msg.from_user.id == ADMIN_ID)
 def execute_broadcast(message):
     admin_id = message.from_user.id
@@ -365,5 +361,10 @@ def execute_broadcast(message):
     bot.send_message(admin_id, f"📢 **Broadcast Completed!** Successfully sent to {success_count} targets ({target}).")
 
 if __name__ == "__main__":
-    print("Bot with SQLite Database is active and running smoothly...")
+    # Start Flask Web Server in a separate thread so Render port binding passes
+    flask_thread = threading.Thread(target=run_flask)
+    flask_thread.daemon = True
+    flask_thread.start()
+    
+    print("Bot with Flask Web Server & SQLite is running...")
     bot.infinity_polling()
